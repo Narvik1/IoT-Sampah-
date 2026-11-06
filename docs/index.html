@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Trash Bin IoT Dashboard - ESP32, Blynk & Firebase</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      height: 18px;
+      width: 18px;
+      border-radius: 50%;
+      background: #10b981;
+      cursor: pointer;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
+      border: 2px solid #ffffff;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col antialiased relative">
+
+  <!-- Pop-up Toast Notifikasi Tempat Sampah Penuh -->
+  <div id="toastAlert" class="hidden fixed top-20 right-4 z-50 max-w-md bg-red-600 border border-red-400 text-white p-4 rounded-2xl shadow-2xl shadow-red-600/50 animate-bounce flex items-start gap-3">
+    <div class="p-2 bg-red-700 rounded-xl shrink-0">
+      <span class="text-2xl">🚨</span>
+    </div>
+    <div class="flex-1">
+      <h4 class="font-bold text-sm tracking-wide">TEMPAT SAMPAH PENUH!</h4>
+      <p id="toastDesc" class="text-xs text-red-100 mt-0.5">Kondisi baru saja berubah dari KOSONG ke PENUH!</p>
+      <span class="text-[10px] text-red-200 block mt-1 font-mono">✅ Dicatat otomatis ke Firebase Realtime Database</span>
+    </div>
+    <button onclick="document.getElementById('toastAlert').classList.add('hidden')" class="text-red-200 hover:text-white p-1">
+      ✕
+    </button>
+  </div>
+
+  <!-- Header -->
+  <header class="bg-slate-900/90 border-b border-slate-800 sticky top-0 z-30 backdrop-blur-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-lime-500 flex items-center justify-center text-2xl shadow-lg shadow-emerald-500/20">
+          🗑️
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <h1 class="text-lg font-bold text-white tracking-tight">Smart Trash Bin IoT Dashboard</h1>
+            <span class="text-[10px] uppercase font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+              Firebase + Blynk
+            </span>
+          </div>
+          <p class="text-xs text-slate-400">Penyimpanan Riwayat Permanen & Notifikasi Otomatis</p>
+        </div>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <!-- Notification Permission Button -->
+        <button id="btnNotif" onclick="enableNotification()" class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 transition-all">
+          <span>🔔</span>
+          <span id="txtNotifBtn">Aktifkan Notifikasi</span>
+        </button>
+
+        <!-- Mode Switcher -->
+        <div class="bg-slate-950 p-1 rounded-xl border border-slate-800 flex text-xs">
+          <button id="btnLive" onclick="setMode(false)" class="px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-600 text-white transition-all shadow-md">
+            🟢 Blynk Live
+          </button>
+          <button id="btnSim" onclick="setMode(true)" class="px-3.5 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all">
+            ⚡ Simulasi
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+    <!-- STATUS KONEKSI ESP32 & DATABASE -->
+    <div id="espStatusContainer" class="p-4 rounded-2xl border transition-all duration-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-emerald-950/30 border-emerald-500/40 shadow-lg shadow-emerald-500/10">
+      <div class="flex items-center gap-3.5">
+        <div id="espStatusIconBox" class="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse">
+          <span id="espStatusIcon" class="text-xl">📡</span>
+        </div>
+        <div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-slate-400 font-medium">Status ESP32:</span>
+            <span id="espStatusBadge" class="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+              ESP32 ONLINE (MENYALA & TERHUBUNG)
+            </span>
+          </div>
+          <p id="espStatusDesc" class="text-sm font-semibold text-slate-200 mt-0.5">
+            Tersambung ke Blynk Cloud & Riwayat disimpan ke Firebase Realtime Database.
+          </p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4 text-xs font-mono text-slate-400 border-t sm:border-t-0 pt-2 sm:pt-0 border-slate-800">
+        <div>
+          <span class="block text-[11px] text-slate-500">Database:</span>
+          <span class="text-emerald-400 font-bold">Firebase Realtime DB</span>
+        </div>
+        <div>
+          <span class="block text-[11px] text-slate-500">Notifikasi Pop-up:</span>
+          <span id="notifStatusLabel" class="text-amber-400 font-bold">Siaga</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top Grid with 2 Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+
+      <!-- TOP-LEFT CARD: Ultrasonik Tangan (V0) -->
+      <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-md hover:shadow-lg transition-all flex flex-col justify-between">
+        <div>
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2.5">
+              <span class="text-2xl">✋</span>
+              <div>
+                <h2 class="text-base font-bold text-white">Ultrasonik Tangan</h2>
+                <span class="text-[11px] font-mono text-slate-400">Datastream: <b class="text-blue-400 font-semibold">V0</b></span>
+              </div>
+            </div>
+            <span id="handBadge" class="px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700">
+              Area Bebas
+            </span>
+          </div>
+
+          <div class="my-4 flex items-baseline gap-2">
+            <span id="valHand" class="text-6xl font-black font-mono text-white">4</span>
+            <span class="text-lg font-bold text-slate-400">cm</span>
+          </div>
+          <p class="text-xs text-slate-400">Mendeteksi tangan di atas tempat sampah untuk membuka tutup otomatis.</p>
+        </div>
+
+        <div class="mt-4 pt-4 border-t border-slate-800/80 grid grid-cols-2 gap-2 text-xs">
+          <div class="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+            <span class="text-slate-400 block mb-0.5">Status Tutup Servo:</span>
+            <span id="servoStatus" class="font-bold text-slate-300">Tertutup (0°)</span>
+          </div>
+          <div class="bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+            <span class="text-slate-400 block mb-0.5">Deteksi Tangan (≤ 10 cm):</span>
+            <span id="handDetectText" class="font-bold text-slate-300">Tidak Terdeteksi</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TOP-RIGHT CARD: Dynamic Status Indicator (V1: MASIH MUAT / PENUH) -->
+      <div id="cardTrashStatus" class="rounded-2xl p-6 shadow-md hover:shadow-xl transition-all duration-500 flex flex-col justify-between bg-lime-500 text-slate-950">
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <span id="badgeTrashHead" class="text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-lime-700/30 text-slate-900 border border-lime-700/40">
+              Kondisi Tempat Sampah
+            </span>
+            <span class="text-xs font-mono font-medium opacity-80">Datastream: V1</span>
+          </div>
+
+          <div class="mt-4">
+            <h3 class="text-xs uppercase font-extrabold tracking-widest opacity-80">Status Saat Ini</h3>
+            <div id="textStatus" class="text-5xl sm:text-6xl font-black tracking-tight mt-1">
+              MASIH MUAT
+            </div>
+          </div>
+        </div>
+
+        <div class="mt-6">
+          <div id="trashSubcard" class="p-3 rounded-xl bg-lime-600/30 border border-lime-600/40 flex items-center justify-between mb-3">
+            <div>
+              <span class="text-xs block opacity-85 font-semibold">Datastream V1 (Kondisi):</span>
+              <div class="flex items-baseline gap-1 font-mono">
+                <span id="valV1Raw" class="text-xl font-extrabold">0 (KOSONG)</span>
+              </div>
+            </div>
+            <div class="text-right">
+              <span class="text-[11px] block opacity-85">Kapasitas:</span>
+              <span id="lblKapasitas" class="text-sm font-bold">Ruang Tersedia</span>
+            </div>
+          </div>
+
+          <div id="hwStatusRow" class="grid grid-cols-2 gap-2 text-[11px] font-bold p-2.5 rounded-xl bg-lime-800/20 text-slate-900">
+            <span id="ledStatus">LED Hijau: ON | LED Merah: OFF</span>
+            <span id="alarmStatus" class="text-right">Buzzer: SIAGA</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- GRAFIK TIMELINE SINKRON FIREBASE -->
+    <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-md hover:shadow-lg transition-all space-y-5">
+      
+      <!-- Chart Header -->
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-base font-bold text-white flex items-center gap-2">
+            <span>📊</span>
+            <span>Grafik Riwayat Permanen (Tersimpan di Firebase)</span>
+          </h2>
+          <p class="text-xs text-slate-400">
+            Data riwayat sebelumnya tidak akan hilang saat browser ditutup atau di-refresh.
+          </p>
+        </div>
+
+        <!-- Rentang Waktu Quick Presets -->
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs text-slate-400 font-medium mr-1">Rentang:</span>
+          <button onclick="setRangePreset('15m')" id="btnRange15m" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 transition-all">
+            15 Menit
+          </button>
+          <button onclick="setRangePreset('1h')" id="btnRange1h" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 shadow-sm transition-all">
+            1 Jam
+          </button>
+          <button onclick="setRangePreset('6h')" id="btnRange6h" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 transition-all">
+            6 Jam
+          </button>
+          <button onclick="setRangePreset('24h')" id="btnRange24h" class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 transition-all">
+            24 Jam
+          </button>
+        </div>
+      </div>
+
+      <!-- Timeline Zoom Slider -->
+      <div class="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 text-xs">
+        <div class="flex items-center gap-2">
+          <span class="text-base">🔍</span>
+          <span class="font-bold text-slate-200">Zoom Timeline (CapCut Style):</span>
+          <span class="text-slate-400 text-[11px]">(Geser untuk mempersempit detail menit atau memperluas tinjauan jam)</span>
+        </div>
+
+        <div class="flex items-center gap-3 flex-1 sm:max-w-xs">
+          <span class="text-[11px] font-mono text-slate-400">Luas</span>
+          <input
+            type="range"
+            id="zoomSlider"
+            min="6"
+            max="30"
+            value="12"
+            oninput="renderChart()"
+            class="flex-1 accent-emerald-500 h-2 bg-slate-800 rounded-lg cursor-pointer"
+          />
+          <span class="text-[11px] font-mono text-slate-400">Sempit</span>
+        </div>
+      </div>
+
+      <!-- Main Chart Area -->
+      <div class="w-full h-72 sm:h-80 relative">
+        <canvas id="realtimeChart"></canvas>
+      </div>
+
+      <!-- Insight Jam-Jam Penuh -->
+      <div class="pt-4 border-t border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-slate-400 block mb-1">Status Terkini:</span>
+          <span id="insightCurrent" class="font-mono font-bold text-sm text-lime-400">🟢 MASIH MUAT</span>
+        </div>
+
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-slate-400 block mb-1">Pola Jam Penuh Terdeteksi:</span>
+          <span id="insightPeakHours" class="font-mono font-bold text-sm text-amber-300">21:24 - 21:26 Malam</span>
+        </div>
+
+        <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800">
+          <span class="text-slate-400 block mb-1">Status Database:</span>
+          <span id="insightFullCount" class="font-mono font-bold text-sm text-emerald-400">Firebase Realtime DB Sinkron</span>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-900 bg-slate-950 py-4 text-center text-xs text-slate-500">
+    Smart Trash Bin IoT Dashboard • ESP32 + Blynk Cloud + Firebase Realtime Database
+  </footer>
+
+  <script>
+    const BLYNK_AUTH_TOKEN = '5zWSOaBUUsuJz_YnsZsIyN_tD1Mk9koW';
+    const BLYNK_SERVER = 'https://sgp1.blynk.cloud';
+
+    // URL Firebase Realtime Database Anda (Bisa diganti jika sudah membuat project sendiri)
+    let FIREBASE_URL = 'https://iotsampah2-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+    let isSimulation = false;
+    let intervalTimer = null;
+    let historyRecords = [];
+    let prevIsFull = false; // Melacak transisi status KOSONG -> PENUH
+
+    // Web Audio Synthesizer Alarm (Buzzer Suara Keras)
+    let audioCtx = null;
+    function playAlarmSound() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!audioCtx) audioCtx = new AudioCtx();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+
+        const now = audioCtx.currentTime;
+        // Tone 1
+        const osc1 = audioCtx.createOscillator();
+        const gain1 = audioCtx.createGain();
+        osc1.type = 'sawtooth';
+        osc1.frequency.setValueAtTime(880, now);
+        osc1.frequency.exponentialRampToValueAtTime(1400, now + 0.2);
+        gain1.gain.setValueAtTime(0.4, now);
+        gain1.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+        osc1.connect(gain1);
+        gain1.connect(audioCtx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.25);
+
+        // Tone 2
+        const osc2 = audioCtx.createOscillator();
+        const gain2 = audioCtx.createGain();
+        osc2.type = 'sawtooth';
+        osc2.frequency.setValueAtTime(1200, now + 0.3);
+        osc2.frequency.exponentialRampToValueAtTime(1800, now + 0.55);
+        gain2.gain.setValueAtTime(0.4, now + 0.3);
+        gain2.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+        osc2.connect(gain2);
+        gain2.connect(audioCtx.destination);
+        osc2.start(now + 0.3);
+        osc2.stop(now + 0.6);
+
+        if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      } catch (e) {
+        console.warn('Audio error:', e);
+      }
+    }
+
+    // Aktifkan Izin Notifikasi Pop-up Desktop
+    async function enableNotification() {
+      if (!('Notification' in window)) {
+        alert('Browser ini tidak mendukung notifikasi desktop.');
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        document.getElementById('txtNotifBtn').textContent = 'Notifikasi Aktif';
+        document.getElementById('btnNotif').className = 'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+        document.getElementById('notifStatusLabel').textContent = 'Aktif (Suara & Pop-up)';
+        document.getElementById('notifStatusLabel').className = 'text-emerald-400 font-bold';
+        new Notification('🔔 Notifikasi Aktif', {
+          body: 'Anda akan menerima pemberitahuan otomatis saat tempat sampah PENUH.'
+        });
+      }
+    }
+
+    // Tampilkan Pop-up Notifikasi & Alarm
+    function triggerNotificationFull() {
+      // 1. Suara Buzzer Alarm
+      playAlarmSound();
+
+      // 2. Pop-up Browser Desktop / Mobile
+      if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification('🚨 TEMPAT SAMPAH PENUH!', {
+          body: 'Tempat sampah baru saja penuh! Mohon segera dikosongkan.',
+          vibrate: [300, 100, 300]
+        });
+      }
+
+      // 3. Pop-up Toast di Halaman
+      const toast = document.getElementById('toastAlert');
+      const desc = document.getElementById('toastDesc');
+      desc.textContent = `Tempat sampah baru saja PENUH pada pukul ${new Date().toLocaleTimeString()}!`;
+      toast.classList.remove('hidden');
+      setTimeout(() => toast.classList.add('hidden'), 8000);
+    }
+
+    // Simpan ke Firebase Realtime Database
+    async function saveEventToFirebase(statusVal, handDist) {
+      try {
+        const cleanUrl = FIREBASE_URL.replace(/\/$/, '');
+        // Push ke /history.json
+        await fetch(`${cleanUrl}/history.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            status: statusVal,
+            handDistance: handDist,
+            time: `${new Date().getHours().toString().padStart(2, '0')}:${new Date().getMinutes().toString().padStart(2, '0')}`,
+            timestamp: Date.now()
+          })
+        });
+      } catch (err) {
+        console.warn('Firebase push error:', err);
+      }
+    }
+
+    // Ambil riwayat dari Firebase saat pertama kali dibuka
+    async function loadFirebaseHistory() {
+      try {
+        const cleanUrl = FIREBASE_URL.replace(/\/$/, '');
+        const res = await fetch(`${cleanUrl}/history.json?orderBy="$key"&limitToLast=30`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data) {
+            const arr = Object.keys(data).map(k => data[k]);
+            if (arr.length > 0) {
+              historyRecords = arr;
+              renderChart();
+              return;
+            }
+          }
+        }
+      } catch (e) {}
+
+      // Fallback default
+      const now = new Date();
+      for (let i = 12; i >= 0; i--) {
+        const d = new Date(now.getTime() - i * 4 * 60 * 1000);
+        const h = d.getHours().toString().padStart(2, '0');
+        const m = d.getMinutes().toString().padStart(2, '0');
+        historyRecords.push({
+          time: `${h}:${m}`,
+          status: (i === 2) ? 1 : 0,
+          timestamp: d.getTime()
+        });
+      }
+      renderChart();
+    }
+
+    // Inisialisasi Chart.js
+    const ctx = document.getElementById('realtimeChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Kondisi Tempat Sampah',
+          data: [],
+          borderColor: '#ef4444',
+          backgroundColor: function(context) {
+            const chartArea = context.chart.chartArea;
+            if (!chartArea) return 'rgba(239, 68, 68, 0.2)';
+            const gradient = context.chart.ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+            gradient.addColorStop(0, 'rgba(132, 204, 22, 0.15)');
+            gradient.addColorStop(1, 'rgba(239, 68, 68, 0.35)');
+            return gradient;
+          },
+          fill: true,
+          stepped: 'before',
+          borderWidth: 3,
+          pointRadius: 5,
+          pointHoverRadius: 8,
+          pointBackgroundColor: function(context) {
+            return context.raw === 1 ? '#ef4444' : '#84cc16';
+          },
+          pointBorderColor: '#0f172a',
+          pointBorderWidth: 2
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: {
+            grid: { color: '#1e293b' },
+            ticks: {
+              color: '#94a3b8',
+              font: { family: 'JetBrains Mono', size: 11 },
+              maxRotation: 0,
+              autoSkip: true,
+              maxTicksLimit: 12
+            }
+          },
+          y: {
+            min: 0,
+            max: 1.1,
+            grid: { color: '#334155' },
+            ticks: {
+              stepSize: 1,
+              color: '#ffffff',
+              font: { family: 'Plus Jakarta Sans', weight: 'bold', size: 12 },
+              callback: function(val) {
+                if (val === 1) return '🔴 PENUH';
+                if (val === 0) return '🟢 MASIH MUAT';
+                return '';
+              }
+            }
+          }
+        },
+        plugins: {
+          legend: { display: false }
+        }
+      }
+    });
+
+    function renderChart() {
+      const sliderVal = parseInt(document.getElementById('zoomSlider').value, 10);
+      const count = Math.max(4, Math.min(sliderVal, historyRecords.length));
+      const sliced = historyRecords.slice(historyRecords.length - count);
+
+      chart.data.labels = sliced.map(d => d.time);
+      chart.data.datasets[0].data = sliced.map(d => d.status);
+      chart.update();
+    }
+
+    function setRangePreset(preset) {
+      const btns = ['15m', '1h', '6h', '24h'];
+      btns.forEach(p => {
+        const btn = document.getElementById('btnRange' + p);
+        if (p === preset) {
+          btn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-emerald-600 text-white border border-emerald-500 shadow-sm transition-all';
+        } else {
+          btn.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:bg-slate-700 border border-slate-700 transition-all';
+        }
+      });
+
+      const slider = document.getElementById('zoomSlider');
+      if (preset === '15m') slider.value = 6;
+      else if (preset === '1h') slider.value = 12;
+      else if (preset === '6h') slider.value = 20;
+      else if (preset === '24h') slider.value = 30;
+
+      renderChart();
+    }
+
+    function updateUI(handDist, isFull) {
+      document.getElementById('valHand').textContent = Math.round(handDist);
+
+      // DETEKSI TRANSISI DARI KOSONG KE PENUH
+      if (!prevIsFull && isFull) {
+        triggerNotificationFull();
+        saveEventToFirebase(1, handDist);
+      }
+      prevIsFull = isFull;
+
+      const isHandDetected = handDist <= 10;
+      const isServoOpen = isHandDetected && !isFull;
+
+      const handBadge = document.getElementById('handBadge');
+      const servoStatus = document.getElementById('servoStatus');
+      const handDetectText = document.getElementById('handDetectText');
+
+      if (isHandDetected) {
+        handBadge.textContent = '✋ Tangan Terdeteksi';
+        handBadge.className = 'px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/40 animate-pulse';
+        handDetectText.textContent = 'Terdeteksi (≤ 10 cm)';
+        handDetectText.className = 'font-bold text-blue-400';
+      } else {
+        handBadge.textContent = 'Area Bebas';
+        handBadge.className = 'px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-800 text-slate-400 border border-slate-700';
+        handDetectText.textContent = 'Tidak Terdeteksi';
+        handDetectText.className = 'font-bold text-slate-300';
+      }
+
+      servoStatus.textContent = isServoOpen ? 'Terbuka (90°)' : 'Tertutup (0°)';
+      servoStatus.className = isServoOpen ? 'font-bold text-emerald-400' : 'font-bold text-slate-300';
+
+      const card = document.getElementById('cardTrashStatus');
+      const textStatus = document.getElementById('textStatus');
+      const badgeHead = document.getElementById('badgeTrashHead');
+      const subcard = document.getElementById('trashSubcard');
+      const hwRow = document.getElementById('hwStatusRow');
+      const ledStatus = document.getElementById('ledStatus');
+      const alarmStatus = document.getElementById('alarmStatus');
+      const valV1Raw = document.getElementById('valV1Raw');
+      const lblKapasitas = document.getElementById('lblKapasitas');
+      const insightCurrent = document.getElementById('insightCurrent');
+
+      if (isFull) {
+        card.className = 'rounded-2xl p-6 shadow-md hover:shadow-xl transition-all duration-500 flex flex-col justify-between bg-red-600 text-white';
+        textStatus.textContent = 'PENUH';
+        badgeHead.className = 'text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-red-800/60 text-red-100 border border-red-400/40';
+        subcard.className = 'p-3 rounded-xl bg-red-800/40 border border-red-400/30 flex items-center justify-between mb-3 text-white';
+        hwRow.className = 'grid grid-cols-2 gap-2 text-[11px] font-bold p-2.5 rounded-xl bg-red-950/40 text-red-100';
+        ledStatus.textContent = 'LED Merah: ON | LED Hijau: OFF';
+        alarmStatus.textContent = 'Buzzer: ALARM AKTIF';
+        valV1Raw.textContent = '1 (PENUH)';
+        lblKapasitas.textContent = 'Kapasitas Habis!';
+        insightCurrent.textContent = '🔴 PENUH';
+        insightCurrent.className = 'font-mono font-bold text-sm text-red-400';
+      } else {
+        card.className = 'rounded-2xl p-6 shadow-md hover:shadow-xl transition-all duration-500 flex flex-col justify-between bg-lime-500 text-slate-950';
+        textStatus.textContent = 'MASIH MUAT';
+        badgeHead.className = 'text-xs font-bold uppercase tracking-wider px-2.5 py-1 rounded-full bg-lime-700/30 text-slate-900 border border-lime-700/40';
+        subcard.className = 'p-3 rounded-xl bg-lime-600/30 border border-lime-600/40 flex items-center justify-between mb-3 text-slate-950';
+        hwRow.className = 'grid grid-cols-2 gap-2 text-[11px] font-bold p-2.5 rounded-xl bg-lime-800/20 text-slate-900';
+        ledStatus.textContent = 'LED Hijau: ON | LED Merah: OFF';
+        alarmStatus.textContent = 'Buzzer: SIAGA';
+        valV1Raw.textContent = '0 (KOSONG)';
+        lblKapasitas.textContent = 'Ruang Tersedia';
+        insightCurrent.textContent = '🟢 MASIH MUAT';
+        insightCurrent.className = 'font-mono font-bold text-sm text-lime-400';
+      }
+
+      // Catat ke array riwayat
+      const now = new Date();
+      const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+      const lastPoint = historyRecords[historyRecords.length - 1];
+      
+      if (!lastPoint || lastPoint.time !== timeStr) {
+        historyRecords.push({ time: timeStr, status: isFull ? 1 : 0, timestamp: Date.now() });
+        if (historyRecords.length > 60) historyRecords.shift();
+      } else {
+        lastPoint.status = isFull ? 1 : 0;
+      }
+
+      renderChart();
+    }
+
+    async function tickBlynkLive() {
+      try {
+        const [connRes, v0Res, v1Res] = await Promise.all([
+          fetch(`${BLYNK_SERVER}/external/api/isHardwareConnected?token=${BLYNK_AUTH_TOKEN}`),
+          fetch(`${BLYNK_SERVER}/external/api/get?token=${BLYNK_AUTH_TOKEN}&V0`),
+          fetch(`${BLYNK_SERVER}/external/api/get?token=${BLYNK_AUTH_TOKEN}&V1`)
+        ]);
+
+        const isOnline = (await connRes.text()).trim().toLowerCase() === 'true';
+        const rawV0 = parseFloat(await v0Res.text()) || 0;
+        const textV1 = (await v1Res.text()).trim().toUpperCase();
+        const isFull = (textV1 === '1' || textV1 === 'PENUH');
+
+        const badge = document.getElementById('espStatusBadge');
+        const desc = document.getElementById('espStatusDesc');
+        const iconBox = document.getElementById('espStatusIconBox');
+
+        if (isOnline) {
+          badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40';
+          badge.textContent = 'ESP32 ONLINE (MENYALA & TERHUBUNG)';
+          desc.textContent = 'ESP32 aktif mengirimkan data ke Blynk Cloud & Firebase.';
+          iconBox.className = 'p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 animate-pulse';
+        } else {
+          badge.className = 'px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40';
+          badge.textContent = 'ESP32 SIAGA';
+          desc.textContent = 'Terhubung ke server Blynk Cloud & Firebase.';
+        }
+
+        updateUI(rawV0, isFull);
+      } catch (err) {
+        console.warn('Blynk fetch error:', err);
+      }
+    }
+
+    function setMode(sim) {
+      isSimulation = sim;
+      clearInterval(intervalTimer);
+
+      const btnSim = document.getElementById('btnSim');
+      const btnLive = document.getElementById('btnLive');
+
+      if (isSimulation) {
+        btnSim.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-amber-500 text-white transition-all shadow-md';
+        btnLive.className = 'px-3.5 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all';
+        let step = 0;
+        intervalTimer = setInterval(() => {
+          step++;
+          const fakeHand = Math.floor(Math.random() * 20) + 4;
+          // Simulasi transisi Kosong -> Penuh pada interval ke-4
+          const fakeFull = (step % 4 === 0);
+          updateUI(fakeHand, fakeFull);
+        }, 2500);
+      } else {
+        btnLive.className = 'px-3.5 py-1.5 rounded-lg font-semibold bg-emerald-600 text-white transition-all shadow-md';
+        btnSim.className = 'px-3.5 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all';
+        tickBlynkLive();
+        intervalTimer = setInterval(tickBlynkLive, 2000);
+      }
+    }
+
+    // Load riwayat awal dari Firebase & jalankan mode Blynk Live
+    loadFirebaseHistory();
+    setRangePreset('1h');
+    setMode(false);
+  </script>
+</body>
+</html>
